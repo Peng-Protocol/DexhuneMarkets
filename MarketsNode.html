@@ -1,0 +1,154 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>DXM Markets</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#f4f6f9;--pn:#fff;--tx:#18202b;--mu:#6b7684;--ln:#dfe4ea;--ac:#2f5fd0;--up:#12935f;--dn:#d64550;color-scheme:light}
+@media(prefers-color-scheme:dark){:root{--bg:#0e1319;--pn:#151c25;--tx:#e4e9ef;--mu:#8b97a6;--ln:#232d39;--ac:#7ea3ff;--up:#3dc08c;--dn:#f0707a;color-scheme:dark}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 "Segoe UI",system-ui,sans-serif}
+header{display:flex;align-items:center;gap:16px;padding:12px 20px;background:var(--pn);border-bottom:1px solid var(--ln);position:sticky;top:0;z-index:5}
+.logo{font:700 20px Georgia,serif;letter-spacing:-.5px}.sp{flex:1}.mu{color:var(--mu)}.up{color:var(--up)}.dn{color:var(--dn)}
+button,input,select,textarea{font:inherit;color:inherit;background:var(--pn);border:1px solid var(--ln);border-radius:5px;padding:5px 10px}button{cursor:pointer}button:hover{border-color:var(--ac)}button.p{background:var(--ac);color:var(--bg);border-color:var(--ac)}
+main{max-width:1180px;margin:auto;padding:16px 20px}
+.chains{display:flex;gap:22px;overflow-x:auto;border-bottom:1px solid var(--ln);margin-bottom:12px}.chains a{padding:8px 0;cursor:pointer;white-space:nowrap;color:var(--mu);border-bottom:2px solid transparent}.chains a.on{color:var(--tx);border-color:var(--ac)}
+.stats{display:flex;gap:28px;margin:6px 0 14px;flex-wrap:wrap}.stats b{display:block;font-size:18px}
+.bar{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+table{width:100%;border-collapse:collapse;background:var(--pn);border:1px solid var(--ln)}th,td{padding:9px 12px;text-align:right;border-bottom:1px solid var(--ln);font-variant-numeric:tabular-nums}th{color:var(--mu);font-weight:500}th:nth-child(2),td:nth-child(2){text-align:left}tbody>tr:first-child{cursor:pointer}tbody>tr:first-child:hover{background:var(--bg)}
+.tg{font-size:11px;border:1px solid var(--ac);color:var(--ac);border-radius:9px;padding:0 6px;margin-left:6px}
+.det td{text-align:left;background:var(--bg)}.det table{border:0;background:none}
+svg.s{width:90px;height:26px}svg.s polyline,svg.l polyline{fill:none;stroke-width:1.5;vector-effect:non-scaling-stroke}svg.l{width:100%;height:70px}
+#dr{position:fixed;top:0;right:0;bottom:0;width:min(520px,100%);background:var(--pn);border-left:1px solid var(--ln);z-index:9;overflow:auto;padding:16px}
+.tabs{display:flex;gap:16px;border-bottom:1px solid var(--ln);margin:10px 0}.tabs a{padding:6px 0;cursor:pointer;color:var(--mu)}.tabs a.on{color:var(--tx);border-bottom:2px solid var(--ac)}
+.card{border:1px solid var(--ln);border-radius:6px;padding:10px;margin:8px 0}.w{width:100%;margin:3px 0}code{word-break:break-all;font-size:12px}
+</style>
+<script>
+const dbp=new Promise((res,rej)=>{const r=indexedDB.open('dxm',1);r.onupgradeneeded=()=>{r.result.createObjectStore('kv');r.result.createObjectStore('prices',{autoIncrement:true})};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
+const tx=async(s,m,f)=>{const db=await dbp;return new Promise((res,rej)=>{const t=db.transaction(s,m),o=f(t.objectStore(s));t.oncomplete=()=>res(o.result);t.onerror=()=>rej(t.error)})};
+const kvGet=k=>tx('kv','readonly',s=>s.get(k)),kvSet=(k,v)=>tx('kv','readwrite',s=>s.put(v,k)),kvDel=k=>tx('kv','readwrite',s=>s.delete(k));
+const addPrice=r=>tx('prices','readwrite',s=>s.add(r)),allPrices=()=>tx('prices','readonly',s=>s.getAll());
+const pl=o=>JSON.parse(JSON.stringify(o));
+const enc=new TextEncoder(),dec=new TextDecoder(),hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join(''),unhex=h=>Uint8Array.from(h.match(/../g),x=>parseInt(x,16));
+async function dk(pw,salt){const m=await crypto.subtle.importKey('raw',enc.encode(pw),'PBKDF2',false,['deriveKey']);return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:600000,hash:'SHA-256'},m,{name:'AES-GCM',length:256},false,['encrypt','decrypt'])}
+async function seal(pw,t){const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12));return{salt:hex(salt),iv:hex(iv),ct:hex(await crypto.subtle.encrypt({name:'AES-GCM',iv},await dk(pw,salt),enc.encode(t)))}}
+async function unseal(pw,o){return dec.decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:unhex(o.iv)},await dk(pw,unhex(o.salt)),unhex(o.ct)))}
+let SEED=null;
+const rpc=async(u,m,p)=>{const r=await(await fetch(u,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:m,params:p})})).json();if(r.error)throw new Error(r.error.message);return r.result};
+const W=(h,i)=>BigInt('0x'+h.slice(2+64*i,66+64*i)),A=(h,i)=>'0x'+h.slice(26+64*i,66+64*i).toLowerCase();
+const SC=10n**30n,ratio=(n,d)=>Number(n*SC/d)/1e30,P10=n=>10n**BigInt(n);
+async function readPool(c,blk,p,target,dc){
+ const call=(to,d)=>rpc(c.rpc,'eth_call',[{to,data:d},blk]);
+ const t0=A(await call(p.addr,'0x0dfe1681'),0),t1=A(await call(p.addr,'0xd21220a7'),0);target=target.toLowerCase();
+ if(t0!==target&&t1!==target)throw new Error('intended token is not in this pool');
+ const dd=async a=>dc[a]??=Number(W(await call(a,'0x313ce567'),0)),d0=await dd(t0),d1=await dd(t1);let p01,r0,r1;
+ if(p.type==='v2'){const h=await call(p.addr,'0x0902f1ac');r0=W(h,0);r1=W(h,1);if(!r0||!r1)throw new Error('empty pool');p01=ratio(r1*P10(d0),r0*P10(d1))}
+ else{const sq=W(await call(p.addr,'0x3850c7bd'),0),L=W(await call(p.addr,'0x1a686502'),0);if(!sq)throw new Error('uninitialised');p01=ratio(sq*sq*P10(d0),(1n<<192n)*P10(d1));r0=(L<<96n)/sq;r1=(L*sq)>>96n}
+ const is0=t0===target;return{pool:p.addr,type:p.type,quote:is0?t1:t0,price:is0?p01:1/p01,qAmt:Number(is0?r1:r0)/10**(is0?d1:d0)};}
+function aggregate(rows,nat,minLiq=1000,dev=0.05){
+ const u=rows.map(r=>{const f=r.quote===nat.usdt?1:r.quote===nat.w?nat.price:null;return f==null?null:{...r,usd:r.price*f,liq:2*r.qAmt*f}}).filter(r=>r&&r.liq>=minLiq);if(!u.length)return null;
+ const s=u.map(r=>r.usd).sort((a,b)=>a-b),med=s[Math.floor(s.length/2)],ok=u.filter(r=>Math.abs(r.usd/med-1)<=dev),L=ok.reduce((a,r)=>a+r.liq,0);
+ return{avg:ok.reduce((a,r)=>a+r.usd*r.liq,0)/L,simple:ok.reduce((a,r)=>a+r.usd,0)/ok.length,liq:L,pools:u.map(r=>({...r,used:ok.includes(r)}))};}
+const DOM={name:'DXM Oracle',version:'1'};
+const TYPES={Report:[['feedId','bytes32'],['chainId','uint256'],['price','uint256'],['timestamp','uint256'],['seq','uint256'],['epoch','uint256'],['block','uint256']].map(([name,type])=>({name,type}))};
+function verifyReport(msg,sigs,man){const seen=new Set();let sum=0;for(const s of sigs){const a=ethers.verifyTypedData(DOM,TYPES,msg,s).toLowerCase(),w=man.managers[a];if(w&&!seen.has(a)){seen.add(a);sum+=w}}return{signers:seen.size,weight:sum,ok:seen.size>=man.minSigners&&sum>=man.threshold}}
+const M1='0x'+'a1'.repeat(20),M2='0x'+'b2'.repeat(20),M3='0x'+'c3'.repeat(20);
+const DEF_MAN={epoch:1,minSigners:2,threshold:8,managers:{[M1]:4,[M2]:3,[M3]:3},chains:{eth:{chainId:1,rpc:'https://ethereum-rpc.publicnode.com',usdt:'0xdAC17F958D2ee523a2206206994597C13D831ec7',wnative:'0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',basePool:{type:'v2',addr:'0x0d4a11d5EEaaC28EC3F61d100daF4d40471f1852'}}}};
+// ---------- sample market data (shown until live feeds exist) ----------
+const CH=[['all','All chains'],['eth','Ethereum'],['bsc','BNB Chain'],['base','Base'],['avax','Avalanche'],['arb','Arbitrum']];
+const TK=[['ETH','Ethereum','eth',3120,375],['WBTC','Wrapped BTC','eth',97000,12],['LINK','Chainlink','eth',14.8,9.3],['UNI','Uniswap','eth',9.2,5.5],['AAVE','Aave','eth',182,2.7],['BNB','BNB','bsc',610,89],['CAKE','PancakeSwap','bsc',2.4,.7],['XVS','Venus','bsc',6.1,.1],['AERO','Aerodrome','base',.92,.8],['BRETT','Brett','base',.11,1.1],['AVAX','Avalanche','avax',34,14],['JOE','Trader Joe','avax',.43,.17],['ARB','Arbitrum','arb',.74,2.9],['GMX','GMX','arb',23,.24],['PENDLE','Pendle','arb',4.2,.7]];
+const rnd=s=>()=>(s=(s*1664525+1013904223)>>>0)/4294967296,VEN=['Uniswap v3','Uniswap v2','Sushi v2','Pancake v3','Aerodrome'];
+const pts=(a,w=300,h=56)=>{const mn=Math.min(...a),r=(Math.max(...a)-mn)||1;return a.map((v,i)=>`${i/(a.length-1)*w},${h-2-(v-mn)/r*(h-6)}`).join(' ')};
+function sample(){return TK.map(([sym,name,chain,price,mc],k)=>{const r=rnd(k*977+13),mcap=mc*1e9,liq=mcap*(.01+r()*.06);let v=1;const sp=Array.from({length:24},()=>v*=1+(r()-.48)*.05),chg=(sp[23]/sp[0]-1)*100;
+ return{id:chain+':'+sym,sym,name,chain,price,chg,vol:mcap*(.02+r()*.1),mcap,liq,sp:pts(sp),dp:[0,1,2].map(i=>({pool:VEN[(k+i)%5],type:i?'v2':'v3',usd:price*(1+(r()-.5)*.006),liq:liq*[.55,.3,.15][i],used:true}))}})}
+const big=n=>n==null?'-':n>=1e9?'$'+(n/1e9).toFixed(2)+'B':n>=1e6?'$'+(n/1e6).toFixed(1)+'M':n>=1e3?'$'+(n/1e3).toFixed(1)+'K':'$'+n.toFixed(0);
+const fmt=n=>n==null?'-':n<1?'$'+n.toPrecision(4):'$'+n.toLocaleString(undefined,{maximumFractionDigits:2}),sh=a=>a?a.slice(0,6)+'…'+a.slice(-4):'';
+function dxm(){return{
+ st:'none',pw:'',mn:'',n:5,accts:[],idn:null,msg:'',man:DEF_MAN,manTxt:'',feeds:[],hist:{},res:{},props:[],born:Date.now(),peers:30+Math.floor(Math.random()*20),
+ chain:'all',sortK:'mcap',asc:false,open:null,dr:false,tab:'wallet',dummy:sample(),nf:{id:'',chain:'eth',token:'',pools:''},CH,
+ async init(){const w=await kvGet('wallet'),h=await kvGet('headless');this.born=(await kvGet('born'))||(await kvSet('born',Date.now()),Date.now());
+  this.idn=(await kvGet('identity'))||null;
+  if(w)this.st='locked';else{if(!h){const m=ethers.Wallet.createRandom().mnemonic.phrase;await kvSet('headless',{mn:m});this.hl=m}else this.hl=h.mn;this.st='headless';if(!this.idn)await this.pickPhrase(this.hl,0)}
+  this.man=(await kvGet('manifest'))||DEF_MAN;this.manTxt=JSON.stringify(this.man,null,1);this.feeds=(await kvGet('feeds'))||[];
+  let p=await kvGet('proposals');if(!p){const f=(id,chain,token)=>({id,chain,token,pools:[{type:'v3',addr:'0x…'}]});
+   p=[{id:'p1',feed:f('PENDLE','arb','0x0c880f6761f1af8d9aa9c466984b80dab9a8c9e8'),by:M1,t:Date.now()-36e5*5,votes:{[M1]:{v:'yes'},[M2]:{v:'yes'}}},{id:'p2',feed:f('BRETT','base','0x532f27101965dd16442e59d40670faf5ebb142e4'),by:M2,t:Date.now()-36e5*20,votes:{[M2]:{v:'yes'},[M3]:{v:'no'}}}];await kvSet('proposals',pl(p))}
+  this.props=p;await this.loadHist();setInterval(()=>this.peers=Math.max(20,this.peers+Math.round(Math.random()*4-2)),4000)},
+ async pickPhrase(m,i){const w=ethers.HDNodeWallet.fromPhrase(m,undefined,`m/44'/60'/0'/0/${i}`);this.idn={i,address:w.address,pk:w.privateKey};await kvSet('identity',{...this.idn})},
+ get age(){const m=Math.floor((Date.now()-this.born)/6e4);return Math.floor(m/1440)+'d '+Math.floor(m%1440/60)+'h'},
+ gen(){this.mn=ethers.Wallet.createRandom().mnemonic.phrase},
+ async save(){if(!ethers.Mnemonic.isValidMnemonic(this.mn)||this.pw.length<8)return this.msg='Enter a valid phrase and a password of 8+ characters.';
+  await kvSet('wallet',await seal(this.pw,this.mn));await kvDel('headless');this.hl=null;await this.pickPhrase(this.mn,0);this.mn='';this.pw='';this.st='locked';this.msg='Phrase encrypted. Your node key stays unlocked for signing.'},
+ async unlock(){try{SEED=await unseal(this.pw,await kvGet('wallet'));this.pw='';this.st='open';this.accts=this.derive();this.msg=''}catch(e){this.msg='Wrong password.'}},
+ derive(){return Array.from({length:this.n},(_,i)=>{const w=ethers.HDNodeWallet.fromPhrase(SEED,undefined,`m/44'/60'/0'/0/${i}`);return{i,address:w.address,pk:w.privateKey}})},
+ more(){this.n++;this.accts=this.derive()},
+ async pick(a){this.idn={i:a.i,address:a.address,pk:a.pk};await kvSet('identity',{...this.idn})},
+ lock(){SEED=null;this.accts=[];this.st='locked'},
+ async applyMan(){try{const m=JSON.parse(this.manTxt),l={};for(const k in m.managers)l[k.toLowerCase()]=m.managers[k];m.managers=l;this.man=m;await kvSet('manifest',pl(m));this.msg='Manifest applied.'}catch(e){this.msg=e.message}},
+ async testMgr(){const m=pl(this.man);m.managers[this.idn.address.toLowerCase()]=10;m.minSigners=1;this.man=m;this.manTxt=JSON.stringify(m,null,1);await kvSet('manifest',m)},
+ tally(p){let y=0,n=0,yw=0,nw=0;for(const a in p.votes){const w=this.man.managers[a]||0,v=p.votes[a].v;v==='yes'?(y++,yw+=w):(n++,nw+=w)}return{y,n,yw,nw}},
+ status(p){if(p.done)return'accepted';const t=this.tally(p);return t.yw>=this.man.threshold&&t.y>=this.man.minSigners?'accepted':'pending'},
+ async propose(){if(!this.idn||!this.nf.id||!this.nf.token)return this.msg='Name, token address and at least one pool are required.';
+  const pools=this.nf.pools.split('\n').map(s=>s.trim()).filter(Boolean).map(s=>{const[type,addr]=s.split(':');return{type,addr}});
+  this.props.unshift({id:'p'+Date.now(),feed:{id:this.nf.id,chain:this.nf.chain,token:this.nf.token,pools},by:this.idn.address.toLowerCase(),t:Date.now(),votes:{}});await kvSet('proposals',pl(this.props));this.nf.id=this.nf.token=this.nf.pools=''},
+ async vote(p,v){if(!this.idn)return;const sig=await new ethers.Wallet(this.idn.pk).signMessage(`DXM vote ${p.id} ${v}`);p.votes[this.idn.address.toLowerCase()]={v,sig};
+  if(this.status(p)==='accepted'&&!p.done){p.done=true;if(!this.feeds.some(f=>f.id===p.feed.id))this.feeds.push({...pl(p.feed),seq:0});await kvSet('feeds',pl(this.feeds))}await kvSet('proposals',pl(this.props))},
+ async run(f){try{const c=this.man.chains[f.chain];if(!c)throw new Error('Chain not configured in the manifest');const blk=await rpc(c.rpc,'eth_blockNumber',[]),dc={};
+  const b=await readPool(c,blk,c.basePool,c.wnative,dc);if(b.quote!==c.usdt.toLowerCase())throw new Error('base pool must be WNATIVE/USDT');
+  const nat={usdt:c.usdt.toLowerCase(),w:c.wnative.toLowerCase(),price:b.price},rows=[],errs=[];
+  for(const p of f.pools){try{rows.push(await readPool(c,blk,p,f.token,dc))}catch(e){errs.push(p.addr+': '+e.message)}}
+  const a=aggregate(rows,nat);this.res[f.id]={blk,errs,...(a||{})};if(a){await addPrice({feed:f.id,t:Date.now(),p:a.avg,blk});await this.loadHist()}else this.res[f.id].errs.push('no usable pools')}catch(e){this.res[f.id]={errs:[e.message]}}},
+ async sign(f){const r=this.res[f.id];if(!r?.avg||!this.idn)return;const c=this.man.chains[f.chain];f.seq++;
+  const msg={feedId:ethers.id(f.id),chainId:c.chainId,price:ethers.parseUnits(r.avg.toFixed(18),18),timestamp:Math.floor(Date.now()/1000),seq:f.seq,epoch:this.man.epoch,block:BigInt(r.blk)};
+  const sig=await new ethers.Wallet(this.idn.pk).signTypedData(DOM,TYPES,msg);r.rep={sig,v:verifyReport(msg,[sig],this.man)};await kvSet('feeds',pl(this.feeds))},
+ async loadHist(){this.hist={};for(const r of await allPrices())(this.hist[r.feed]??=[]).push(r);for(const k in this.hist)this.hist[k]=this.hist[k].slice(-300)},
+ get rows(){const live=this.feeds.map(f=>{const h=this.hist[f.id]||[],r=this.res[f.id],p=r?.avg??h.at(-1)?.p;return{id:'live:'+f.id,f,sym:f.id,name:'Live feed',chain:f.chain,price:p,chg:h.length>1?(h.at(-1).p/h[0].p-1)*100:null,vol:null,mcap:null,liq:r?.liq,sp:h.length>1?pts(h.map(x=>x.p)):'',live:1}});
+  return[...live,...this.dummy].filter(r=>this.chain==='all'||r.chain===this.chain).sort((a,b)=>{const x=a[this.sortK]??-Infinity,y=b[this.sortK]??-Infinity;return this.asc?x-y:y-x})},
+ pools(r){return r.live?(this.res[r.f.id]?.pools||[]).map(p=>({...p,pool:sh(p.pool)})):r.dp},
+ get tvl(){return this.dummy.reduce((a,r)=>a+r.liq,0)},get vol(){return this.dummy.reduce((a,r)=>a+r.vol,0)},
+ big,fmt,sh
+}}
+</script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
+</head><body x-data="dxm()" x-init="init()">
+<header><span class="logo">DXM</span><span class="mu">Markets</span><span class="sp"></span>
+ <span class="mu"><span x-text="peers"></span> peers · node age <span x-text="age"></span> · <code x-text="sh(idn&&idn.address)"></code></span>
+ <button @click="dr=true">Options</button></header>
+<main>
+ <div class="chains"><template x-for="c in CH" :key="c[0]"><a :class="chain===c[0]&&'on'" @click="chain=c[0]" x-text="c[1]"></a></template></div>
+ <div class="stats"><div class="mu">Tracked liquidity<b class="tx" x-text="big(tvl)"></b></div><div class="mu">24h volume<b x-text="big(vol)"></b></div><div class="mu">Feeds<b x-text="rows.length"></b></div><div class="mu">Pending proposals<b x-text="props.filter(p=>status(p)==='pending').length"></b></div></div>
+ <div class="bar"><span class="mu">Sort by</span><select x-model="sortK"><option value="mcap">Market cap</option><option value="vol">24h volume</option><option value="chg">24h change</option><option value="liq">Liquidity</option><option value="price">Price</option></select><button @click="asc=!asc" x-text="asc?'Ascending':'Descending'"></button><span class="mu">Sample data is shown until live feeds are fetched.</span></div>
+ <table><thead><tr><th>#</th><th>Token</th><th>Price</th><th>24h</th><th>24h volume</th><th>Market cap</th><th>Liquidity</th><th>Last 24h</th></tr></thead>
+ <template x-for="(r,i) in rows" :key="r.id"><tbody>
+  <tr @click="open=open===r.id?null:r.id"><td class="mu" x-text="i+1"></td><td><b x-text="r.sym"></b><span class="tg" x-show="r.live">live</span> <span class="mu" x-text="r.name"></span></td><td x-text="fmt(r.price)"></td>
+   <td :class="r.chg>=0?'up':'dn'" x-text="r.chg==null?'-':(r.chg>=0?'+':'')+r.chg.toFixed(2)+'%'"></td><td x-text="big(r.vol)"></td><td x-text="big(r.mcap)"></td><td x-text="big(r.liq)"></td>
+   <td><svg class="s" viewBox="0 0 300 56" preserveAspectRatio="none"><polyline :points="r.sp" :stroke="r.chg>=0?'var(--up)':'var(--dn)'"/></svg></td></tr>
+  <template x-if="open===r.id"><tr class="det"><td colspan="8">
+   <template x-if="r.live"><div><button @click.stop="run(r.f)">Fetch prices</button> <button @click.stop="sign(r.f)" :disabled="!res[r.f.id]?.avg">Sign report</button>
+    <template x-for="e in res[r.f.id]?.errs||[]"><span class="mu" x-text="' '+e"></span></template>
+    <template x-if="res[r.f.id]?.rep"><p class="mu">Report signed by <code x-text="sh(idn.address)"></code>: <span x-text="res[r.f.id].rep.v.signers+' signer, weight '+res[r.f.id].rep.v.weight+(res[r.f.id].rep.v.ok?' (quorum met)':' (quorum not met)')"></span></p></template></div></template>
+   <table><tr><th>Source</th><th>Type</th><th>Price</th><th>Liquidity</th><th>Used</th></tr>
+    <template x-for="p in pools(r)"><tr><td style="text-align:left" x-text="p.pool"></td><td x-text="p.type"></td><td x-text="fmt(p.usd)"></td><td x-text="big(p.liq)"></td><td x-text="p.used?'yes':'outlier'"></td></tr></template></table>
+   <p class="mu" x-show="!r.live">Sample pools. Add this token as a feed in Options to read the real ones.</p>
+  </td></tr></template></tbody></template></table>
+</main>
+
+<aside id="dr" x-show="dr" x-cloak @keydown.escape.window="dr=false">
+ <div class="bar"><b>Options</b><span class="sp"></span><button @click="dr=false">Close</button></div><p class="mu" x-show="msg" x-text="msg"></p>
+ <div class="tabs"><template x-for="t in ['wallet','registry','feeds']"><a :class="tab===t&&'on'" @click="tab=t" x-text="t==='feeds'?'Feeds and proposals':t[0].toUpperCase()+t.slice(1)"></a></template></div>
+ <div x-show="tab==='wallet'">
+  <p>Node key <code x-text="idn&&idn.address"></code></p>
+  <template x-if="st==='headless'"><div class="card"><b>Headless wallet</b><p class="mu">A phrase was generated for you on arrival. Save it, then set a password to encrypt it.</p><details><summary>Reveal phrase</summary><code x-text="hl"></code></details>
+   <textarea class="w" rows="2" x-model="mn" placeholder="Or import your own phrase"></textarea><input type="password" x-model="pw" placeholder="Password (8+ characters)"><button class="p" @click="mn=mn||hl;save()">Encrypt phrase</button></div></template>
+  <template x-if="st==='locked'"><div class="card"><input type="password" x-model="pw" placeholder="Password" @keydown.enter="unlock()"><button class="p" @click="unlock()">Unlock to manage accounts</button></div></template>
+  <template x-if="st==='open'"><div class="card"><template x-for="a in accts" :key="a.i"><div><code x-text="a.i+' '+a.address"></code> <button @click="pick(a)" x-text="idn&&idn.address===a.address?'Node key':'Use'"></button></div></template><button @click="more()">Derive another</button> <button @click="lock()">Lock</button></div></template>
+ </div>
+ <div x-show="tab==='registry'"><textarea class="w" rows="14" x-model="manTxt"></textarea><button class="p" @click="applyMan()">Apply manifest</button> <button @click="testMgr()">Register my node as manager (local test)</button>
+  <p class="mu">Weights are uncapped. A proposal needs the weight threshold and the minimum number of distinct signers.</p></div>
+ <div x-show="tab==='feeds'">
+  <div class="card"><b>Propose a feed</b><input class="w" x-model="nf.id" placeholder="Name"><input class="w" x-model="nf.chain" placeholder="Chain key (eth)"><input class="w" x-model="nf.token" placeholder="Token address">
+   <textarea class="w" rows="3" x-model="nf.pools" placeholder="v2:0xPool or v3:0xPool, one per line"></textarea><button class="p" @click="propose()">Submit proposal</button></div>
+  <b>Pending proposals</b>
+  <template x-for="p in props" :key="p.id"><div class="card"><b x-text="p.feed.id"></b> <span class="mu" x-text="p.feed.chain+' · by '+sh(p.by)+' · '+status(p)"></span><br><code x-text="p.feed.token"></code>
+   <p class="mu" x-text="'Yes '+tally(p).y+' (weight '+tally(p).yw+') · No '+tally(p).n+' (weight '+tally(p).nw+') · needs '+man.threshold+' weight, '+man.minSigners+' signers'"></p>
+   <template x-for="(v,a) in p.votes"><span class="tg" :class="v.v==='no'&&'dn'" x-text="sh(a)+' '+v.v"></span></template>
+   <div x-show="status(p)==='pending'" style="margin-top:6px"><button @click="vote(p,'yes')">Vote yes</button> <button @click="vote(p,'no')">Vote no</button></div></div></template>
+ </div>
+</aside>
+</body></html>
